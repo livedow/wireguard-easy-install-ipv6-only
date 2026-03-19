@@ -15,7 +15,6 @@ exiterr2() { exiterr "'apt-get install' failed."; }
 exiterr3() { exiterr "'yum install' failed."; }
 exiterr4() { exiterr "'zypper install' failed."; }
 
-#IPv6 Check
 check_ip() {
 	IP_REGEX='^(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))$'
 	printf '%s' "$1" | tr -d '\n' | grep -Eq "$IP_REGEX"
@@ -540,7 +539,7 @@ show_config() {
 }
 
 detect_ipv6() {
-	ip6=""
+	ip6="yes"
 	if [[ $(ip -6 addr | grep -c 'inet6 [23]') -ne 0 ]]; then
 		ip6=$(ip -6 addr | grep 'inet6 [23]' | cut -d '/' -f 1 | grep -oE '([0-9a-fA-F]{0,4}:){1,7}[0-9a-fA-F]{0,4}' | sed -n 1p)
 	fi
@@ -771,7 +770,7 @@ create_server_config() {
 # ENDPOINT $([[ -n "$public_ip" ]] && echo "$public_ip" || echo "$ip")
 
 [Interface]
-Address = $([[ -n "$ip6" ]] && echo ", fddd:2c4:2c4:2c4::1/64")
+Address = $([[ -n "$ip6" ]] && echo "fddd:2c4:2c4:2c4::1/64")
 PrivateKey = $(wg genkey)
 ListenPort = $port
 
@@ -876,17 +875,17 @@ select_dns() {
 	if [ "$auto" = 0 ]; then
 		echo
 		echo "Select a DNS server for the client:"
-		echo "   1) Current system resolvers"
+		echo "   1) Current system resolvers IPv6"
 		echo "   2) Google Public DNS"
 		echo "   3) Cloudflare DNS"
 		echo "   4) OpenDNS"
 		echo "   5) Quad9"
 		echo "   6) AdGuard DNS"
 		echo "   7) Custom"
-		read -rp "DNS server [2]: " dns
+		read -rp "DNS server (IPv6) [2]: " dns
 		until [[ -z "$dns" || "$dns" =~ ^[1-7]$ ]]; do
 			echo "$dns: invalid selection."
-			read -rp "DNS server [2]: " dns
+			read -rp "DNS server (IPv6) [2]: " dns
 		done
 	else
 		dns=2
@@ -894,30 +893,22 @@ select_dns() {
 		# DNS
 	case "$dns" in
 		1)
-			# Locate the proper resolv.conf
-			# Needed for systems running systemd-resolved
-			if grep '^nameserver' "/etc/resolv.conf" | grep -qv '127.0.0.53' ; then
-				resolv_conf="/etc/resolv.conf"
-			else
-				resolv_conf="/run/systemd/resolve/resolv.conf"
-			fi
-			# Extract nameservers and provide them in the required format
-			dns=$(grep -v '^#\|^;' "$resolv_conf" | grep '^nameserver' | grep -v '127.0.0.53' | grep -oE '[0-9]{1,3}(\.[0-9]{1,3}){3}' | xargs | sed -e 's/ /, /g')
+			dns="2606:4700:4700::1111, 2606:4700:4700::1001"
 		;;
 		2|"")
-			dns="8.8.8.8, 8.8.4.4"
+			dns="2001:4860:4860::8888, 2001:4860:4860::8844"
 		;;
 		3)
-			dns="1.1.1.1, 1.0.0.1"
+			dns="2606:4700:4700::1111, 2606:4700:4700::1001"
 		;;
 		4)
-			dns="208.67.222.222, 208.67.220.220"
+			dns="2620:119:35::35, 2620:119:53::53"
 		;;
 		5)
-			dns="9.9.9.9, 149.112.112.112"
+			dns="2620:fe::fe, 2620:fe::9"
 		;;
 		6)
-			dns="94.140.14.14, 94.140.15.15"
+			dns="2a10:50c0::ad1:ff, 2a10:50c0::ad2:ff"
 		;;
 		7)
 			enter_custom_dns
@@ -934,7 +925,7 @@ select_client_ip() {
 	# Given a list of the assigned internal IPv4 addresses, obtain the lowest still
 	# available octet. Important to start looking at 2, because 1 is our gateway.
 	octet=2
-	while grep AllowedIPs "$WG_CONF" | cut -d "." -f 4 | cut -d "/" -f 1 | grep -q "^$octet$"; do
+	while grep AllowedIPs "$WG_CONF" | grep ":" | awk -F: '{print $NF}' | cut -d "/" -f 1 | grep -q "^${octet}$"; do
 		(( octet++ ))
 	done
 	# Don't break the WireGuard configuration in case the address space is full
@@ -948,28 +939,25 @@ new_client() {
 	specify_ip=n
 	if [ "$1" = "add_client" ] && [ "$add_client" = 0 ]; then
 		echo
-		read -rp "Do you want to specify an internal IP address for the new client? [y/N]: " specify_ip
+		read -rp "Do you want to specify an internal IP address for the new client? [y/N] (e.g. fddd:2c4:2c4:2c4::3/64): " specify_ip
 		until [[ "$specify_ip" =~ ^[yYnN]*$ ]]; do
 			echo "$specify_ip: invalid selection."
-			read -rp "Do you want to specify an internal IP address for the new client? [y/N]: " specify_ip
+			read -rp "Do you want to specify an internal IP address for the new client? [y/N] (e.g. fddd:2c4:2c4:2c4::3/64): " specify_ip
 		done
 		if [[ ! "$specify_ip" =~ ^[yY]$ ]]; then
-			echo "Using auto assigned IP address 10.7.0.$octet."
+			echo "Using auto assigned IP address fddd:2c4:2c4:2c4::$octet."
 		fi
 	fi
 	if [[ "$specify_ip" =~ ^[yY]$ ]]; then
 		echo
-		read -rp "Enter IP address for the new client (e.g. 10.7.0.X): " client_ip
+		read -rp "Enter IP address for the new client (e.g. fddd:2c4:2c4:2c4::3/64): " client_ip
 		octet=$(printf '%s' "$client_ip" | cut -d "." -f 4)
 		until [[ $client_ip =~ ^10\.7\.0\.([2-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-4])$ ]] \
 			&& ! grep AllowedIPs "$WG_CONF" | cut -d "." -f 4 | cut -d "/" -f 1 | grep -q "^$octet$"; do
-			if [[ ! $client_ip =~ ^10\.7\.0\.([2-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-4])$ ]]; then
-				echo "Invalid IP address. Must be within the range 10.7.0.2 to 10.7.0.254."
-			else
-				echo "The IP address is already in use. Please choose another one."
+			if [[  $client_ip =~ ^10\.7\.0\.([2-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-4])$ ]]; then
+				echo "Invalid IP address. Must be within the range fddd:2c4:2c4:2c4::3/64 to fddd:2c4:2c4:2c4::64/64."
+				octet=$(printf '%s' "$client_ip" | awk -F: '{print $NF}')
 			fi
-			read -rp "Enter IP address for the new client (e.g. 10.7.0.X): " client_ip
-			octet=$(printf '%s' "$client_ip" | cut -d "." -f 4)
 		done
 	fi
 	key=$(wg genkey)
@@ -980,14 +968,14 @@ new_client() {
 [Peer]
 PublicKey = $(wg pubkey <<< "$key")
 PresharedKey = $psk
-AllowedIPs = fddd:2c4:2c4:2c4::$octet/128
+AllowedIPs = $(grep -q 'fddd:2c4:2c4:2c4::1' "$WG_CONF" && echo "fddd:2c4:2c4:2c4::$octet/128")
 # END_PEER $client
 EOF
 	# Create client configuration
 	get_export_dir
 	cat << EOF > "$export_dir$client".conf
 [Interface]
-Address = fddd:2c4:2c4:2c4::$octet/64
+Address = $(grep -q 'fddd:2c4:2c4:2c4::1' "$WG_CONF" && echo "fddd:2c4:2c4:2c4::$octet/64")
 DNS = $dns
 PrivateKey = $key
 
